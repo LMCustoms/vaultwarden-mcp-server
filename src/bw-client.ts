@@ -207,6 +207,9 @@ export class BWClient {
         BW_CLIENTID: clientId,
         BW_CLIENTSECRET: clientSecret,
         BW_NOINTERACTION: "true",
+        BITWARDENCLI_APPDATA_DIR:
+          process.env["BITWARDENCLI_APPDATA_DIR"] ??
+          `${process.env["HOME"] ?? "/tmp"}/.bw-mcp`,
       };
       await execFileAsync("bw", ["login", "--apikey"], { env, timeout: 30000 });
     }
