@@ -1,0 +1,12 @@
+name: PR Notifications
+
+on:
+  pull_request:
+    types: [opened, reopened, closed, review_requested]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  notify:
+    uses: LMCustoms/.github/.github/workflows/pr-notifications.yml@main
+    secrets: inherit

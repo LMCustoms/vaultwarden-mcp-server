@@ -1,0 +1,13 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - ".github/**"
+
+jobs:
+  release:
+    uses: LMCustoms/.github/.github/workflows/release-semantic.yml@main
+    secrets: inherit
