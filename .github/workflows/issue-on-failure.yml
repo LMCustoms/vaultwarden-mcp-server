@@ -1,0 +1,13 @@
+name: Create Issue on Failure
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+jobs:
+  create-issue:
+    if: github.event.workflow_run.conclusion == 'failure'
+    uses: LMCustoms/.github/.github/workflows/issue-on-failure.yml@main
+    permissions:
+      issues: write

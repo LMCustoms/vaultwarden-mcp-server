@@ -1,0 +1,10 @@
+name: Issue Notifications
+
+on:
+  issues:
+    types: [opened, closed, reopened]
+
+jobs:
+  notify:
+    uses: LMCustoms/.github/.github/workflows/issue-notifications.yml@main
+    secrets: inherit
