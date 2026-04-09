@@ -1,0 +1,10 @@
+name: Security Audit
+
+on:
+  pull_request:
+  schedule:
+    - cron: "0 8 * * 1"
+
+jobs:
+  audit:
+    uses: LMCustoms/.github/.github/workflows/security-audit.yml@main

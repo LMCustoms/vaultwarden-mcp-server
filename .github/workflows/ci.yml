@@ -1,0 +1,16 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: LMCustoms/.github/.github/workflows/ci-node.yml@main
+    with:
+      node-version: "20"
+      run-lint: false
+      run-typecheck: false
+      run-test: false
+      run-build: true
