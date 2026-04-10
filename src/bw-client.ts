@@ -152,9 +152,7 @@ export class BWClient {
    * Returns the session key.
    */
   async login(email: string, password: string): Promise<string> {
-    await this.configure();
-
-    let status = await this.getStatus();
+    const status = await this.getStatus();
 
     if (status.status === "unlocked") {
       await this.sync();
@@ -172,7 +170,8 @@ export class BWClient {
       return this.sessionKey;
     }
 
-    // Unauthenticated — full login
+    // Unauthenticated — configure server URL, then full login
+    await this.configure();
     try {
       const raw = await this.exec(
         ["login", email, password, "--raw"],
@@ -207,8 +206,6 @@ export class BWClient {
     clientSecret: string,
     password: string
   ): Promise<string> {
-    await this.configure();
-
     let status = await this.getStatus();
 
     // Already unlocked — just sync
@@ -217,21 +214,19 @@ export class BWClient {
       return this.sessionKey ?? "";
     }
 
-    // Locked under a different or unknown user — logout first
+    // Locked — just unlock, no need to logout or reconfigure
     if (status.status === "locked") {
-      console.error("Vault is locked, logging out to start fresh...");
-      try {
-        await this.logout();
-      } catch {
-        // Logout can fail if session is corrupt — ignore
-      }
-      status = await this.getStatus();
-      if (status.status === "locked") {
-        throw new Error("Vault is locked and logout failed. Please manually run 'bw logout' to clear the stale session.");
-      }
+      const raw = await this.exec(
+        ["unlock", password, "--raw"],
+        { noSession: true }
+      );
+      this.sessionKey = raw;
+      await this.sync();
+      return this.sessionKey;
     }
 
-    // Now we should be unauthenticated — login with API key
+    // Unauthenticated — configure server URL, then login with API key
+    await this.configure();
     if (status.status === "unauthenticated") {
       const loginEnv = {
         ...process.env as Record<string, string>,
