@@ -1,0 +1,11 @@
+name: Notify Registry
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    uses: LMCustoms/.github/.github/workflows/notify-registry.yml@main
+    secrets:
+      REGISTRY_API_TOKEN: ${{ secrets.REGISTRY_API_TOKEN }}
