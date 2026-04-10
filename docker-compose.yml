@@ -3,6 +3,8 @@ services:
     build: .
     container_name: vaultwarden-mcp-server
     restart: unless-stopped
+    extra_hosts:
+      - "vault.lmcustoms.cc:host-gateway"
     environment:
       - MCP_TRANSPORT=http
       - MCP_PORT=3000
