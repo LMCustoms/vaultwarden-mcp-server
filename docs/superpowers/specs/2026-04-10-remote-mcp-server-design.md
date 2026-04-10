@@ -147,6 +147,18 @@ Clients connect with just a URL and header — no local installation required:
 
 ---
 
+## 7. Deployment
+
+After implementation, deploy to Schrombus:
+1. Push the branch / merge to main
+2. SSH into Schrombus, clone/pull the repo
+3. Create `.env` file with all required variables
+4. Run `docker compose up -d`
+5. Verify Traefik picks up the service and TLS works
+6. Test the MCP endpoint remotely
+
+---
+
 ## Out of Scope
 
 - Tests (no existing test infrastructure; can be added in a follow-up)
