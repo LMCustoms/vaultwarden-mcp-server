@@ -3,7 +3,7 @@
  * Vaultwarden MCP Server
  *
  * Exposes Bitwarden/Vaultwarden vault operations as MCP tools
- * via the Bitwarden CLI. Communicates over stdio transport.
+ * via the Bitwarden CLI. Supports stdio and HTTP transports.
  *
  * Required environment variables:
  *   BW_SERVER_URL  – Vaultwarden instance URL (e.g. https://vault.example.com)
@@ -18,6 +18,9 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { BWClient, CipherType } from "./bw-client.js";
 import type { VaultItem } from "./bw-client.js";
@@ -113,7 +116,18 @@ const server = new McpServer({
 let authenticated = false;
 
 async function ensureAuthenticated(): Promise<void> {
-  if (authenticated) return;
+  // Validate that an existing session is still alive
+  if (authenticated) {
+    try {
+      const status = await client.getStatus();
+      if (status.status === "unlocked") return;
+      // Session went stale — re-authenticate
+      console.error("Session stale, re-authenticating...");
+      authenticated = false;
+    } catch {
+      authenticated = false;
+    }
+  }
 
   // If a session key is provided, use it directly
   const existingSession = process.env["BW_SESSION"];
@@ -143,11 +157,13 @@ async function ensureAuthenticated(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Tools
+// Tool registration
 // ---------------------------------------------------------------------------
 
+function registerTools(srv: McpServer): void {
+
 // 1. vault_status
-server.tool(
+srv.tool(
   "vault_status",
   "Get the current Bitwarden CLI status (server URL, user, lock state)",
   {},
@@ -177,7 +193,7 @@ server.tool(
 );
 
 // 2. vault_login
-server.tool(
+srv.tool(
   "vault_login",
   "Authenticate and unlock the Bitwarden vault. Uses configured env credentials.",
   {},
@@ -197,7 +213,7 @@ server.tool(
 );
 
 // 3. vault_search
-server.tool(
+srv.tool(
   "vault_search",
   "Search vault items by keyword. Returns summaries (no passwords).",
   {
@@ -220,7 +236,7 @@ server.tool(
 );
 
 // 4. vault_get_item
-server.tool(
+srv.tool(
   "vault_get_item",
   "Get full details of a vault item by ID, including all sensitive fields.",
   {
@@ -236,7 +252,7 @@ server.tool(
 );
 
 // 5. vault_get_password
-server.tool(
+srv.tool(
   "vault_get_password",
   "Retrieve just the password for a vault item by ID.",
   {
@@ -252,7 +268,7 @@ server.tool(
 );
 
 // 6. vault_get_totp
-server.tool(
+srv.tool(
   "vault_get_totp",
   "Generate a current TOTP code for a vault item.",
   {
@@ -275,7 +291,7 @@ server.tool(
 );
 
 // 7. vault_create_item
-server.tool(
+srv.tool(
   "vault_create_item",
   "Create a new login item in the vault.",
   {
@@ -322,7 +338,7 @@ server.tool(
 );
 
 // 8. vault_edit_item
-server.tool(
+srv.tool(
   "vault_edit_item",
   "Edit an existing vault item. Fetches current data, merges changes, and saves.",
   {
@@ -363,7 +379,7 @@ server.tool(
 );
 
 // 9. vault_delete_item
-server.tool(
+srv.tool(
   "vault_delete_item",
   "Delete (trash) a vault item by ID. This is a soft delete.",
   {
@@ -387,7 +403,7 @@ server.tool(
 );
 
 // 10. vault_list_folders
-server.tool(
+srv.tool(
   "vault_list_folders",
   "List all folders in the vault.",
   {},
@@ -405,7 +421,7 @@ server.tool(
 );
 
 // 11. vault_create_folder
-server.tool(
+srv.tool(
   "vault_create_folder",
   "Create a new folder in the vault.",
   {
@@ -421,7 +437,7 @@ server.tool(
 );
 
 // 12. vault_generate_password
-server.tool(
+srv.tool(
   "vault_generate_password",
   "Generate a random password or passphrase using the Bitwarden generator.",
   {
@@ -452,7 +468,7 @@ server.tool(
 );
 
 // 13. vault_sync
-server.tool(
+srv.tool(
   "vault_sync",
   "Force a sync of the local vault cache with the Vaultwarden server.",
   {},
@@ -466,7 +482,7 @@ server.tool(
 );
 
 // 14. vault_lock
-server.tool(
+srv.tool(
   "vault_lock",
   "Lock the vault. Session key is cleared; unlock required to continue.",
   {},
@@ -479,15 +495,123 @@ server.tool(
   }
 );
 
+} // end registerTools
+
+// Register tools on the default server (used for stdio mode)
+registerTools(server);
+
+// ---------------------------------------------------------------------------
+// HTTP helpers
+// ---------------------------------------------------------------------------
+
+const MCP_PORT = parseInt(process.env["MCP_PORT"] ?? "3000", 10);
+const MCP_AUTH_TOKEN = process.env["MCP_AUTH_TOKEN"];
+const MCP_TRANSPORT = process.env["MCP_TRANSPORT"] ?? "http";
+
+/** Verify bearer token. Returns true if valid, sends 401 and returns false if not. */
+function checkAuth(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!MCP_AUTH_TOKEN) return true; // No token configured = no auth (dev mode)
+  const authHeader = req.headers["authorization"];
+  if (authHeader === `Bearer ${MCP_AUTH_TOKEN}`) return true;
+  res.writeHead(401, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "Unauthorized" }));
+  return false;
+}
+
+/** Read the full request body as parsed JSON. */
+function readBody(req: IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      const raw = Buffer.concat(chunks).toString();
+      if (!raw) return resolve(undefined);
+      try { resolve(JSON.parse(raw)); }
+      catch (e) { reject(e); }
+    });
+    req.on("error", reject);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  // Log to stderr so stdout stays clean for MCP JSON-RPC
-  console.error("Vaultwarden MCP Server running on stdio");
+  if (MCP_TRANSPORT === "stdio") {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error("Vaultwarden MCP Server running on stdio");
+    return;
+  }
+
+  // HTTP mode — one transport per session
+  const sessions = new Map<string, StreamableHTTPServerTransport>();
+
+  const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    // Auth check
+    if (!checkAuth(req, res)) return;
+
+    // Only handle /mcp path
+    const url = new URL(req.url ?? "/", `http://localhost:${MCP_PORT}`);
+    if (url.pathname !== "/mcp") {
+      res.writeHead(404);
+      res.end("Not found");
+      return;
+    }
+
+    // Health check shortcut
+    if (req.method === "GET" && !req.headers.accept?.includes("text/event-stream")) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok", server: "vaultwarden-mcp-server" }));
+      return;
+    }
+
+    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+    let transport = sessionId ? sessions.get(sessionId) : undefined;
+
+    // Existing session
+    if (transport) {
+      const body = await readBody(req);
+      await transport.handleRequest(req, res, body);
+      return;
+    }
+
+    // New session (POST with initialize)
+    if (req.method === "POST") {
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (id) => {
+          sessions.set(id, transport!);
+          console.error(`Session created: ${id}`);
+        },
+        onsessionclosed: (id) => {
+          sessions.delete(id);
+          console.error(`Session closed: ${id}`);
+        },
+      });
+
+      // Each session gets its own McpServer instance sharing the same BWClient
+      const sessionServer = new McpServer({
+        name: "vaultwarden-mcp-server",
+        version: "1.0.0",
+      });
+      registerTools(sessionServer);
+      await sessionServer.connect(transport);
+
+      const body = await readBody(req);
+      await transport.handleRequest(req, res, body);
+      return;
+    }
+
+    // Unknown session for GET/DELETE
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "No valid session. Send an initialize request first." }));
+  });
+
+  httpServer.listen(MCP_PORT, "0.0.0.0", () => {
+    console.error(`Vaultwarden MCP Server listening on http://0.0.0.0:${MCP_PORT}/mcp`);
+  });
 }
 
 main().catch((err) => {
