@@ -11,8 +11,8 @@ RUN npm run build
 FROM node:20-slim
 WORKDIR /app
 
-# Install Bitwarden CLI globally
-RUN npm install -g @bitwarden/cli
+# Install Bitwarden CLI globally (pinned for Vaultwarden compatibility)
+RUN npm install -g @bitwarden/cli@2025.1.0
 
 # Copy compiled output and production deps
 COPY package.json package-lock.json ./
