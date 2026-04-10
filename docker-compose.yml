@@ -1,0 +1,33 @@
+services:
+  vaultwarden-mcp:
+    build: .
+    container_name: vaultwarden-mcp-server
+    restart: unless-stopped
+    environment:
+      - MCP_TRANSPORT=http
+      - MCP_PORT=3000
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
+      - BW_SERVER_URL=${BW_SERVER_URL}
+      - BW_CLIENT_ID=${BW_CLIENT_ID}
+      - BW_CLIENT_SECRET=${BW_CLIENT_SECRET}
+      - BW_PASSWORD=${BW_PASSWORD}
+      - BITWARDENCLI_APPDATA_DIR=/data/.bw-mcp
+    volumes:
+      - bw-data:/data/.bw-mcp
+    expose:
+      - "3000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.vaultwarden-mcp.rule=Host(`${MCP_HOST}`)"
+      - "traefik.http.routers.vaultwarden-mcp.entrypoints=websecure"
+      - "traefik.http.routers.vaultwarden-mcp.tls.certresolver=letsencrypt"
+      - "traefik.http.services.vaultwarden-mcp.loadbalancer.server.port=3000"
+    networks:
+      - traefik
+
+volumes:
+  bw-data:
+
+networks:
+  traefik:
+    external: true
