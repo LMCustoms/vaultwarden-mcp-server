@@ -20,7 +20,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { BWClient, CipherType } from "./bw-client.js";
 import type { VaultItem } from "./bw-client.js";
@@ -113,6 +113,8 @@ const server = new McpServer({
 // Auto-login helper
 // ---------------------------------------------------------------------------
 
+// TODO(multi-session): In HTTP mode, multiple sessions share this flag and the BWClient.
+// A per-session or per-client auth context would prevent cross-session interference.
 let authenticated = false;
 
 async function ensureAuthenticated(): Promise<void> {
@@ -504,15 +506,25 @@ registerTools(server);
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-const MCP_PORT = parseInt(process.env["MCP_PORT"] ?? "3000", 10);
+const rawPort = parseInt(process.env["MCP_PORT"] ?? "3000", 10);
+const MCP_PORT = isNaN(rawPort) ? 3000 : rawPort;
 const MCP_AUTH_TOKEN = process.env["MCP_AUTH_TOKEN"];
+if (!MCP_AUTH_TOKEN && (process.env["MCP_TRANSPORT"] ?? "http") === "http") {
+  console.error("WARNING: MCP_AUTH_TOKEN is not set — server is open to unauthenticated access");
+}
 const MCP_TRANSPORT = process.env["MCP_TRANSPORT"] ?? "http";
 
 /** Verify bearer token. Returns true if valid, sends 401 and returns false if not. */
 function checkAuth(req: IncomingMessage, res: ServerResponse): boolean {
-  if (!MCP_AUTH_TOKEN) return true; // No token configured = no auth (dev mode)
-  const authHeader = req.headers["authorization"];
-  if (authHeader === `Bearer ${MCP_AUTH_TOKEN}`) return true;
+  if (!MCP_AUTH_TOKEN) {
+    return true;
+  }
+  const authHeader = req.headers["authorization"] ?? "";
+  const expected = `Bearer ${MCP_AUTH_TOKEN}`;
+  const a = Buffer.from(authHeader);
+  const b = Buffer.from(expected);
+  const match = a.length === b.length && timingSafeEqual(a, b);
+  if (match) return true;
   res.writeHead(401, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: "Unauthorized" }));
   return false;
@@ -579,6 +591,12 @@ async function main(): Promise<void> {
 
     // New session (POST with initialize)
     if (req.method === "POST") {
+      const sessionServer = new McpServer({
+        name: "vaultwarden-mcp-server",
+        version: "1.0.0",
+      });
+      registerTools(sessionServer);
+
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (id) => {
@@ -587,16 +605,11 @@ async function main(): Promise<void> {
         },
         onsessionclosed: (id) => {
           sessions.delete(id);
+          sessionServer.close().catch(() => {});
           console.error(`Session closed: ${id}`);
         },
       });
 
-      // Each session gets its own McpServer instance sharing the same BWClient
-      const sessionServer = new McpServer({
-        name: "vaultwarden-mcp-server",
-        version: "1.0.0",
-      });
-      registerTools(sessionServer);
       await sessionServer.connect(transport);
 
       const body = await readBody(req);
