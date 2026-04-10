@@ -179,15 +179,20 @@ export class BWClient {
         { noSession: true }
       );
       this.sessionKey = raw;
-    } catch {
+    } catch (originalError) {
       // May fail if stale session exists — logout and retry
       console.error("Login failed, attempting logout and retry...");
       try { await this.logout(); } catch { /* ignore */ }
-      const raw = await this.exec(
-        ["login", email, password, "--raw"],
-        { noSession: true }
-      );
-      this.sessionKey = raw;
+      try {
+        const raw = await this.exec(
+          ["login", email, password, "--raw"],
+          { noSession: true }
+        );
+        this.sessionKey = raw;
+      } catch {
+        const orig = (originalError as Error).message ?? "Unknown error";
+        throw new Error(`Login failed (retry after logout also failed): ${orig}`);
+      }
     }
 
     await this.sync();
@@ -221,6 +226,9 @@ export class BWClient {
         // Logout can fail if session is corrupt — ignore
       }
       status = await this.getStatus();
+      if (status.status === "locked") {
+        throw new Error("Vault is locked and logout failed. Please manually run 'bw logout' to clear the stale session.");
+      }
     }
 
     // Now we should be unauthenticated — login with API key
