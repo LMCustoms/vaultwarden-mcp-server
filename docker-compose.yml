@@ -4,7 +4,7 @@ services:
     container_name: vaultwarden-mcp-server
     restart: unless-stopped
     extra_hosts:
-      - "vault.lmcustoms.cc:host-gateway"
+      - "vault.lmcustoms.cc:192.168.80.4"
     environment:
       - MCP_TRANSPORT=http
       - MCP_PORT=3000
