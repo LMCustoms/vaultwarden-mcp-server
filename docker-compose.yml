@@ -20,14 +20,15 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.vaultwarden-mcp.rule=Host(`${MCP_HOST}`)"
       - "traefik.http.routers.vaultwarden-mcp.entrypoints=websecure"
+      - "traefik.http.routers.vaultwarden-mcp.tls=true"
       - "traefik.http.routers.vaultwarden-mcp.tls.certresolver=letsencrypt"
       - "traefik.http.services.vaultwarden-mcp.loadbalancer.server.port=3000"
     networks:
-      - traefik
+      - proxy-manager_default
 
 volumes:
   bw-data:
 
 networks:
-  traefik:
+  proxy-manager_default:
     external: true
