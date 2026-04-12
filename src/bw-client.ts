@@ -155,7 +155,7 @@ export class BWClient {
     const status = await this.getStatus();
 
     if (status.status === "unlocked") {
-      await this.sync();
+      // Already unlocked — no need to sync, vault is ready
       return this.sessionKey ?? "";
     }
 
@@ -208,9 +208,8 @@ export class BWClient {
   ): Promise<string> {
     let status = await this.getStatus();
 
-    // Already unlocked — just sync
+    // Already unlocked — no need to sync, vault is ready
     if (status.status === "unlocked") {
-      await this.sync();
       return this.sessionKey ?? "";
     }
 
