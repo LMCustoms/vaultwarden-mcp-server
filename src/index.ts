@@ -101,13 +101,23 @@ const server = new McpServer({
 // TODO(multi-session): In HTTP mode, multiple sessions share this flag and the BWClient.
 // A per-session or per-client auth context would prevent cross-session interference.
 let authenticated = false;
+let lastAuthCheck = 0;
+const AUTH_CHECK_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 async function ensureAuthenticated(): Promise<void> {
+  // Skip `bw status` subprocess if we verified recently
+  if (authenticated && Date.now() - lastAuthCheck < AUTH_CHECK_TTL_MS) {
+    return;
+  }
+
   // Validate that an existing session is still alive
   if (authenticated) {
     try {
       const status = await client.getStatus();
-      if (status.status === "unlocked") return;
+      if (status.status === "unlocked") {
+        lastAuthCheck = Date.now();
+        return;
+      }
       // Session went stale — re-authenticate
       console.error("Session stale, re-authenticating...");
       authenticated = false;
@@ -121,6 +131,7 @@ async function ensureAuthenticated(): Promise<void> {
   if (existingSession) {
     client.setSession(existingSession);
     authenticated = true;
+    lastAuthCheck = Date.now();
     return;
   }
 
@@ -132,9 +143,11 @@ async function ensureAuthenticated(): Promise<void> {
   if (clientId && clientSecret && password) {
     await client.loginWithApiKey(clientId, clientSecret, password);
     authenticated = true;
+    lastAuthCheck = Date.now();
   } else if (email && password) {
     await client.login(email, password);
     authenticated = true;
+    lastAuthCheck = Date.now();
   } else {
     throw new Error(
       "No credentials configured. Set BW_SESSION, or BW_EMAIL + BW_PASSWORD, " +
@@ -478,6 +491,7 @@ srv.tool(
   async () => {
     await client.lock();
     authenticated = false;
+    lastAuthCheck = 0;
     return {
       content: [{ type: "text", text: "Vault locked." }],
     };
