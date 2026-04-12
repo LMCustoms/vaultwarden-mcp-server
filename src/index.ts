@@ -39,61 +39,46 @@ function env(key: string, fallback?: string): string {
 
 /** Format a VaultItem into a human-readable summary (no secrets). */
 function formatItemSummary(item: VaultItem): string {
-  const lines: string[] = [
-    `**${item.name}** (${CipherType[item.type] ?? "Unknown"})`,
-    `ID: ${item.id}`,
+  const parts: string[] = [
+    `${item.name} (${CipherType[item.type] ?? "Unknown"}) id=${item.id}`,
   ];
-  if (item.login?.username) lines.push(`Username: ${item.login.username}`);
-  if (item.login?.uris?.length) {
-    lines.push(`URIs: ${item.login.uris.map((u) => u.uri).join(", ")}`);
-  }
-  if (item.folderId) lines.push(`Folder: ${item.folderId}`);
-  if (item.notes) lines.push(`Notes: ${item.notes.slice(0, 120)}…`);
-  if (item.card?.brand) lines.push(`Card: ${item.card.brand} ****${item.card.number?.slice(-4) ?? "????"}`);
-  if (item.identity?.firstName) {
-    lines.push(`Identity: ${item.identity.firstName} ${item.identity.lastName ?? ""}`);
-  }
-  lines.push(`Modified: ${item.revisionDate}`);
-  return lines.join("\n");
+  if (item.login?.username) parts.push(`user=${item.login.username}`);
+  if (item.login?.uris?.[0]) parts.push(`uri=${item.login.uris[0].uri}`);
+  if (item.card?.brand) parts.push(`card=${item.card.brand}****${item.card.number?.slice(-4) ?? "????"}`);
+  if (item.identity?.firstName) parts.push(`name=${item.identity.firstName} ${item.identity.lastName ?? ""}`);
+  return parts.join(" ");
 }
 
 /** Format a full item including sensitive fields. */
 function formatItemFull(item: VaultItem): string {
   const lines: string[] = [
-    `**${item.name}** (${CipherType[item.type] ?? "Unknown"})`,
-    `ID: ${item.id}`,
+    `${item.name} (${CipherType[item.type] ?? "Unknown"}) id=${item.id}`,
   ];
   if (item.login) {
-    if (item.login.username) lines.push(`Username: ${item.login.username}`);
-    if (item.login.password) lines.push(`Password: ${item.login.password}`);
-    if (item.login.totp) lines.push(`TOTP seed: ${item.login.totp}`);
+    if (item.login.username) lines.push(`user: ${item.login.username}`);
+    if (item.login.password) lines.push(`pass: ${item.login.password}`);
+    if (item.login.totp) lines.push(`totp: ${item.login.totp}`);
     if (item.login.uris?.length) {
-      lines.push(`URIs: ${item.login.uris.map((u) => u.uri).join(", ")}`);
+      lines.push(`uri: ${item.login.uris.map((u) => u.uri).join(", ")}`);
     }
   }
   if (item.card) {
-    lines.push(`Cardholder: ${item.card.cardholderName ?? "N/A"}`);
-    lines.push(`Number: ${item.card.number ?? "N/A"}`);
-    lines.push(`Exp: ${item.card.expMonth}/${item.card.expYear}`);
-    lines.push(`CVV: ${item.card.code ?? "N/A"}`);
+    if (item.card.cardholderName) lines.push(`cardholder: ${item.card.cardholderName}`);
+    if (item.card.number) lines.push(`number: ${item.card.number}`);
+    if (item.card.expMonth || item.card.expYear) lines.push(`exp: ${item.card.expMonth}/${item.card.expYear}`);
+    if (item.card.code) lines.push(`cvv: ${item.card.code}`);
   }
   if (item.identity) {
     const { firstName, lastName, email, phone } = item.identity;
-    lines.push(`Name: ${firstName ?? ""} ${lastName ?? ""}`);
-    if (email) lines.push(`Email: ${email}`);
-    if (phone) lines.push(`Phone: ${phone}`);
+    if (firstName || lastName) lines.push(`name: ${(firstName ?? "")} ${(lastName ?? "")}`.trim());
+    if (email) lines.push(`email: ${email}`);
+    if (phone) lines.push(`phone: ${phone}`);
   }
   if (item.fields?.length) {
-    lines.push("Custom fields:");
-    for (const f of item.fields) {
-      lines.push(`  ${f.name}: ${f.value}`);
-    }
+    for (const f of item.fields) lines.push(`field.${f.name}: ${f.value}`);
   }
-  if (item.notes) lines.push(`Notes: ${item.notes}`);
-  if (item.folderId) lines.push(`Folder: ${item.folderId}`);
-  lines.push(`Favorite: ${item.favorite ? "Yes" : "No"}`);
-  lines.push(`Created: ${item.creationDate}`);
-  lines.push(`Modified: ${item.revisionDate}`);
+  if (item.notes) lines.push(`notes: ${item.notes}`);
+  if (item.folderId) lines.push(`folder: ${item.folderId}`);
   return lines.join("\n");
 }
 
@@ -167,7 +152,7 @@ function registerTools(srv: McpServer): void {
 // 1. vault_status
 srv.tool(
   "vault_status",
-  "Get the current Bitwarden CLI status (server URL, user, lock state)",
+  "Check vault lock state and connection",
   {},
   async () => {
     const installed = await client.checkInstalled();
@@ -197,13 +182,13 @@ srv.tool(
 // 2. vault_login
 srv.tool(
   "vault_login",
-  "Authenticate and unlock the Bitwarden vault. Uses configured env credentials.",
+  "Unlock the vault",
   {},
   async () => {
     try {
       await ensureAuthenticated();
       return {
-        content: [{ type: "text", text: "Vault unlocked and synced successfully." }],
+        content: [{ type: "text", text: "Unlocked." }],
       };
     } catch (err) {
       return {
@@ -217,22 +202,24 @@ srv.tool(
 // 3. vault_search
 srv.tool(
   "vault_search",
-  "Search vault items by keyword. Returns summaries (no passwords).",
+  "Search vault items (no passwords)",
   {
-    query: z.string().describe("Search keyword to filter vault items"),
-    folderId: z.string().optional().describe("Optional folder ID to narrow search"),
+    query: z.string().describe("Search keyword"),
+    folderId: z.string().optional().describe("Filter by folder"),
+    limit: z.number().optional().describe("Max results (def 10)"),
   },
-  async ({ query, folderId }) => {
+  async ({ query, folderId, limit }) => {
     await ensureAuthenticated();
     const items = await client.listItems(query, folderId);
     if (items.length === 0) {
-      return { content: [{ type: "text", text: `No items found for "${query}".` }] };
+      return { content: [{ type: "text", text: "No results." }] };
     }
-    const text = items.map(formatItemSummary).join("\n\n---\n\n");
+    const cap = Math.min(limit ?? 10, 50);
+    const shown = items.slice(0, cap);
+    const lines = shown.map(formatItemSummary);
+    if (items.length > cap) lines.push(`(+${items.length - cap} more)`);
     return {
-      content: [
-        { type: "text", text: `Found ${items.length} item(s):\n\n${text}` },
-      ],
+      content: [{ type: "text", text: lines.join("\n") }],
     };
   }
 );
@@ -240,9 +227,9 @@ srv.tool(
 // 4. vault_get_item
 srv.tool(
   "vault_get_item",
-  "Get full details of a vault item by ID, including all sensitive fields.",
+  "Get full item details including secrets",
   {
-    id: z.string().describe("The vault item ID"),
+    id: z.string().describe("Item ID"),
   },
   async ({ id }) => {
     await ensureAuthenticated();
@@ -256,9 +243,9 @@ srv.tool(
 // 5. vault_get_password
 srv.tool(
   "vault_get_password",
-  "Retrieve just the password for a vault item by ID.",
+  "Get item password only",
   {
-    id: z.string().describe("The vault item ID"),
+    id: z.string().describe("Item ID"),
   },
   async ({ id }) => {
     await ensureAuthenticated();
@@ -272,16 +259,16 @@ srv.tool(
 // 6. vault_get_totp
 srv.tool(
   "vault_get_totp",
-  "Generate a current TOTP code for a vault item.",
+  "Get current TOTP code",
   {
-    id: z.string().describe("The vault item ID (must have TOTP configured)"),
+    id: z.string().describe("Item ID"),
   },
   async ({ id }) => {
     await ensureAuthenticated();
     try {
       const code = await client.getTotp(id);
       return {
-        content: [{ type: "text", text: `TOTP code: ${code}` }],
+        content: [{ type: "text", text: code }],
       };
     } catch (err) {
       return {
@@ -295,15 +282,15 @@ srv.tool(
 // 7. vault_create_item
 srv.tool(
   "vault_create_item",
-  "Create a new login item in the vault.",
+  "Create a login item",
   {
-    name: z.string().describe("Name / title for the item"),
-    username: z.string().optional().describe("Login username"),
-    password: z.string().optional().describe("Login password (omit to auto-generate)"),
-    uri: z.string().optional().describe("Website URL"),
-    notes: z.string().optional().describe("Free-text notes"),
-    folderId: z.string().optional().describe("Folder ID to place the item in"),
-    generatePassword: z.boolean().optional().describe("Auto-generate a strong password if none provided"),
+    name: z.string().describe("Item name"),
+    username: z.string().optional(),
+    password: z.string().optional().describe("Omit to auto-generate"),
+    uri: z.string().optional(),
+    notes: z.string().optional(),
+    folderId: z.string().optional().describe("Folder ID"),
+    generatePassword: z.boolean().optional().describe("Auto-generate password"),
   },
   async ({ name, username, password, uri, notes, folderId, generatePassword }) => {
     await ensureAuthenticated();
@@ -332,7 +319,7 @@ srv.tool(
       content: [
         {
           type: "text",
-          text: `Created item "${created.name}" (ID: ${created.id})${finalPassword && !password ? `\nGenerated password: ${finalPassword}` : ""}`,
+          text: `id=${created.id}${finalPassword && !password ? `\npass=${finalPassword}` : ""}`,
         },
       ],
     };
@@ -342,15 +329,15 @@ srv.tool(
 // 8. vault_edit_item
 srv.tool(
   "vault_edit_item",
-  "Edit an existing vault item. Fetches current data, merges changes, and saves.",
+  "Edit a vault item (partial update)",
   {
-    id: z.string().describe("The vault item ID to edit"),
-    name: z.string().optional().describe("New name"),
-    username: z.string().optional().describe("New username"),
-    password: z.string().optional().describe("New password"),
-    uri: z.string().optional().describe("New URI"),
-    notes: z.string().optional().describe("New notes"),
-    folderId: z.string().optional().describe("Move to folder ID"),
+    id: z.string().describe("Item ID"),
+    name: z.string().optional(),
+    username: z.string().optional(),
+    password: z.string().optional(),
+    uri: z.string().optional(),
+    notes: z.string().optional(),
+    folderId: z.string().optional().describe("Target folder ID"),
   },
   async ({ id, name, username, password, uri, notes, folderId }) => {
     await ensureAuthenticated();
@@ -375,7 +362,7 @@ srv.tool(
 
     const result = await client.editItem(id, updated);
     return {
-      content: [{ type: "text", text: `Updated item "${result.name}" (ID: ${result.id}).` }],
+      content: [{ type: "text", text: "Updated." }],
     };
   }
 );
@@ -383,12 +370,12 @@ srv.tool(
 // 9. vault_delete_item
 srv.tool(
   "vault_delete_item",
-  "Delete (trash) a vault item by ID. This is a soft delete.",
+  "Soft-delete a vault item",
   {
-    id: z.string().describe("The vault item ID to delete"),
+    id: z.string().describe("Item ID"),
     confirm: z
       .boolean()
-      .describe("Must be true to confirm deletion"),
+      .describe("Confirm deletion"),
   },
   async ({ id, confirm }) => {
     if (!confirm) {
@@ -399,7 +386,7 @@ srv.tool(
     await ensureAuthenticated();
     await client.deleteItem(id);
     return {
-      content: [{ type: "text", text: `Item ${id} moved to trash.` }],
+      content: [{ type: "text", text: "Deleted." }],
     };
   }
 );
@@ -407,7 +394,7 @@ srv.tool(
 // 10. vault_list_folders
 srv.tool(
   "vault_list_folders",
-  "List all folders in the vault.",
+  "List folders",
   {},
   async () => {
     await ensureAuthenticated();
@@ -415,9 +402,9 @@ srv.tool(
     if (folders.length === 0) {
       return { content: [{ type: "text", text: "No folders found." }] };
     }
-    const text = folders.map((f) => `• ${f.name} (${f.id})`).join("\n");
+    const text = folders.map((f) => `${f.name} id=${f.id}`).join("\n");
     return {
-      content: [{ type: "text", text: `Folders:\n${text}` }],
+      content: [{ type: "text", text }],
     };
   }
 );
@@ -425,15 +412,15 @@ srv.tool(
 // 11. vault_create_folder
 srv.tool(
   "vault_create_folder",
-  "Create a new folder in the vault.",
+  "Create a folder",
   {
-    name: z.string().describe("Folder name"),
+    name: z.string(),
   },
   async ({ name }) => {
     await ensureAuthenticated();
     const folder = await client.createFolder(name);
     return {
-      content: [{ type: "text", text: `Created folder "${folder.name}" (ID: ${folder.id}).` }],
+      content: [{ type: "text", text: `id=${folder.id}` }],
     };
   }
 );
@@ -441,16 +428,16 @@ srv.tool(
 // 12. vault_generate_password
 srv.tool(
   "vault_generate_password",
-  "Generate a random password or passphrase using the Bitwarden generator.",
+  "Generate a password or passphrase",
   {
-    length: z.number().optional().describe("Password length (default 16)"),
-    uppercase: z.boolean().optional().describe("Include uppercase (default true)"),
-    lowercase: z.boolean().optional().describe("Include lowercase (default true)"),
-    numbers: z.boolean().optional().describe("Include numbers (default true)"),
-    special: z.boolean().optional().describe("Include special characters (default true)"),
-    passphrase: z.boolean().optional().describe("Generate a passphrase instead"),
-    words: z.number().optional().describe("Number of words for passphrase (default 3)"),
-    separator: z.string().optional().describe("Word separator for passphrase (default '-')"),
+    length: z.number().optional().describe("Length (def 16)"),
+    uppercase: z.boolean().optional(),
+    lowercase: z.boolean().optional(),
+    numbers: z.boolean().optional(),
+    special: z.boolean().optional(),
+    passphrase: z.boolean().optional().describe("Passphrase mode"),
+    words: z.number().optional().describe("Word count (def 3)"),
+    separator: z.string().optional().describe("Separator (def '-')"),
   },
   async ({ length, uppercase, lowercase, numbers, special, passphrase, words, separator }) => {
     const pw = await client.generatePassword({
@@ -472,13 +459,13 @@ srv.tool(
 // 13. vault_sync
 srv.tool(
   "vault_sync",
-  "Force a sync of the local vault cache with the Vaultwarden server.",
+  "Sync vault with server",
   {},
   async () => {
     await ensureAuthenticated();
     await client.sync();
     return {
-      content: [{ type: "text", text: "Vault synced successfully." }],
+      content: [{ type: "text", text: "Synced." }],
     };
   }
 );
@@ -486,7 +473,7 @@ srv.tool(
 // 14. vault_lock
 srv.tool(
   "vault_lock",
-  "Lock the vault. Session key is cleared; unlock required to continue.",
+  "Lock the vault",
   {},
   async () => {
     await client.lock();
