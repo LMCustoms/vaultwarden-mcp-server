@@ -1,0 +1,14 @@
+name: Build & Push Docker Image
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-push:
+    uses: LMCustoms/.github/.github/workflows/docker-build-push.yml@main
+    with:
+      image-name: lmcustoms/vaultwarden-mcp-server
+    permissions:
+      contents: read
+      packages: write

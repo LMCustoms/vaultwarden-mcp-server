@@ -1,0 +1,14 @@
+name: Notify Watchtower
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    uses: LMCustoms/.github/.github/workflows/notify-watchtower.yml@main
+    secrets:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      WATCHTOWER_HTTP_API_TOKEN: ${{ secrets.WATCHTOWER_HTTP_API_TOKEN }}
