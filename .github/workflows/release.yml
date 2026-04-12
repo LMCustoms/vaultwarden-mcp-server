@@ -10,4 +10,8 @@ on:
 jobs:
   release:
     uses: LMCustoms/.github/.github/workflows/release-semantic.yml@main
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     secrets: inherit
