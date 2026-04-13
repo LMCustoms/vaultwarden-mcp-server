@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
+    "prebuild": "rm -rf dist",
     "build": "tsc",
     "clean": "rm -rf dist"
   },
